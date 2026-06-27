@@ -132,6 +132,9 @@ export const PARAM_RANGES = {
   },
 };
 
+// Số lần mô phỏng Monte Carlo cho mỗi dự đoán (mặc định 100, tối đa 1000)
+export const SIM_RANGE = { min: 10, max: 1000, step: 10, default: 100 };
+
 // Khóa lưu trữ AsyncStorage
 export const STORAGE_KEYS = {
   history: (gameId) => `vp:history:${gameId}`,
