@@ -15,8 +15,8 @@ function confidenceColor(c, theme) {
 export default function PredictionScreen({ route, navigation }) {
   const { gameId } = route.params;
   const game = GAMES[gameId];
-  const { theme, makeAllPredictions, savePredictions, drawsByGame, modelStats } = useApp();
-  const [results, setResults] = useState(null);
+  const { theme, settings, makeAllPredictions, savePredictions, drawsByGame, modelStats } = useApp();
+  const [result, setResult] = useState(null);
   const [saving, setSaving] = useState(false);
 
   useLayoutEffect(() => {
@@ -27,8 +27,11 @@ export default function PredictionScreen({ route, navigation }) {
 
   const generate = async () => {
     setSaving(true);
+    await new Promise((r) => setTimeout(r, 30));
+    // Vẫn mô phỏng tất cả mô hình + lưu ngầm để AI học, nhưng chỉ hiển thị bộ tốt nhất
     const list = makeAllPredictions(gameId);
-    setResults(list);
+    const sorted = [...list].sort((a, b) => (b.accuracy || 0) - (a.accuracy || 0));
+    setResult(sorted[0]);
     await savePredictions(list);
     setSaving(false);
   };
@@ -55,63 +58,44 @@ export default function PredictionScreen({ route, navigation }) {
       </Card>
 
       <Button
-        title={saving ? 'Đang tạo & lưu…' : '🎲 Tạo dự đoán mới (tất cả mô hình)'}
+        title={saving ? 'Đang tạo…' : '🎲 Tạo dự đoán mới'}
         onPress={generate}
         loading={saving}
       />
 
-      {results ? (
-        <>
-          <View style={{ backgroundColor: theme.success + '18', borderRadius: 10, padding: 10, marginTop: 14 }}>
-            <AppText size={12} color={theme.success}>
-              ✓ Đã tự động lưu {results.length} bộ số (mỗi mô hình một bộ) vào Lịch sử.
-            </AppText>
+      {result ? (
+        <Card style={{ marginTop: 16 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Pill label={result.modelName} color={game.color} />
+            <View style={{ alignItems: 'flex-end' }}>
+              <AppText muted size={11}>
+                Độ tin cậy
+              </AppText>
+              <AppText weight="800" size={18} color={confidenceColor(result.confidence, theme)}>
+                {pct(result.confidence)}
+              </AppText>
+            </View>
           </View>
-
-          <SectionTitle right={null} >Bộ số theo từng mô hình</SectionTitle>
-
-          {results.map((p) => {
-            const tuned = modelStats[gameId]?.[p.model]?.params;
-            return (
-              <Card key={p.id}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <Pill label={p.modelName} color={game.color} />
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <AppText muted size={11}>
-                      Độ tin cậy
-                    </AppText>
-                    <AppText weight="800" size={16} color={confidenceColor(p.confidence, theme)}>
-                      {pct(p.confidence)}
-                    </AppText>
-                  </View>
-                </View>
-                <View style={{ alignItems: 'center', paddingVertical: 4 }}>
-                  <NumberRow
-                    numbers={p.numbers}
-                    special={p.special}
-                    digit3={game.type === 'digit3'}
-                    size={40}
-                  />
-                </View>
-                {game.special ? (
-                  <AppText muted size={11} style={{ textAlign: 'center', marginTop: 4 }}>
-                    🟧 {game.special.label}
-                  </AppText>
-                ) : null}
-                {tuned && (p.model === 'frequency' || p.model === 'markov' || p.model === 'adaptive') ? (
-                  <AppText muted size={10} style={{ textAlign: 'center', marginTop: 6 }}>
-                    ⚙️ Tham số đã được AI tinh chỉnh
-                  </AppText>
-                ) : null}
-              </Card>
-            );
-          })}
-
-          <Divider />
-        </>
+          <View style={{ alignItems: 'center', paddingVertical: 8 }}>
+            <NumberRow
+              numbers={result.numbers}
+              special={result.special}
+              digit3={game.type === 'digit3'}
+              size={44}
+            />
+          </View>
+          {game.special ? (
+            <AppText muted size={11} style={{ textAlign: 'center', marginTop: 4 }}>
+              🟧 {game.special.label}
+            </AppText>
+          ) : null}
+          <AppText muted size={11} style={{ textAlign: 'center', marginTop: 12 }}>
+            ✓ Đã tự động lưu vào Lịch sử
+          </AppText>
+        </Card>
       ) : (
         <AppText muted size={12} style={{ marginTop: 14, textAlign: 'center' }}>
-          Bấm nút trên để sinh bộ số cho cả 4 mô hình. Mỗi lần tạo sẽ tự động lưu để đối chiếu với kết quả sau này.
+          Bấm nút trên để tạo dự đoán. Kết quả tốt nhất sẽ hiển thị và tự động lưu vào Lịch sử.
         </AppText>
       )}
 
