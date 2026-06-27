@@ -3,7 +3,7 @@ import { Appearance } from 'react-native';
 import { DEFAULT_PARAMS, STORAGE_KEYS, GAMES, MODEL_IDS, SIM_RANGE } from '../constants';
 import { getTheme } from '../theme';
 import { getJSON, setJSON, getString } from '../storage/storage';
-import { updateAllGames, getDraws, getLastUpdate, fetchResultByDate } from '../data/dataService';
+import { updateAllGames, getDraws, getLastUpdate, findResultByDate } from '../data/dataService';
 import { predict, predictSimulated } from '../models/predict';
 import { recordResult, emptyStats } from '../models/learning';
 
@@ -233,15 +233,16 @@ export function AppProvider({ children }) {
     [drawsByGame, predictions, modelStats, settings]
   );
 
-  // Tự tìm kết quả thực tế trên mạng theo ngày. Trả về kỳ quay tìm được (hoặc null).
+  // Tự tìm kết quả thực tế trên mạng theo ngày.
+  // Trả về { found, nearest, exactMatch, total, latestDate, earliestDate }.
   const searchResultOnline = useCallback(
     async (gameId, dateISO) => {
-      const { found } = await fetchResultByDate(gameId, dateISO);
+      const info = await findResultByDate(gameId, dateISO);
       // làm mới cache draws trong bộ nhớ
       const draws = await getDraws(gameId);
       setDrawsByGame((prev) => ({ ...prev, [gameId]: draws }));
       setLastUpdate(await getLastUpdate());
-      return found;
+      return info; // { found, source, latestDate }
     },
     []
   );
