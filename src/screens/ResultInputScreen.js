@@ -64,6 +64,7 @@ export default function ResultInputScreen({ route, navigation }) {
   const [special, setSpecial] = useState(game.special ? [game.special.min] : []);
   const [d3, setD3] = useState(game.type === 'digit3' ? Array.from({ length: game.sets }, () => '') : []);
   const [comparison, setComparison] = useState(null);
+  const [quick, setQuick] = useState('');
 
   useLayoutEffect(() => {
     navigation.setOptions({ title: 'Nhập kết quả • ' + game.name });
@@ -109,41 +110,70 @@ export default function ResultInputScreen({ route, navigation }) {
     );
   };
 
-  // Tự tìm kết quả trên mạng theo ngày đã chọn
+  // Điền kết quả vào ô nhập theo thứ tự GIẢM DẦN (lớn -> bé) và cập nhật ngày
+  const fillFromDraw = (draw) => {
+    if (draw.date) {
+      const d = new Date(draw.date + 'T00:00:00');
+      if (!isNaN(d.getTime())) setDate(d);
+    }
+    if (game.type === 'digit3') {
+      const pair = [...(draw.special || [])].map((s) => String(s).padStart(3, '0'));
+      pair.sort((a, b) => Number(b) - Number(a));
+      setD3(pair);
+    } else {
+      setMain([...(draw.main || [])].sort((a, b) => b - a));
+      setSpecial(draw.special || []);
+    }
+  };
+
+  // Nhập nhanh: tách các số trong chuỗi rồi tự điền vào ô (giảm dần)
+  const applyQuick = () => {
+    const nums = (quick.match(/\d+/g) || []).map((x) => parseInt(x, 10));
+    const valid = nums.filter((n) => n >= game.mainMin && n <= game.mainMax);
+    const uniq = [...new Set(valid)];
+    if (uniq.length < game.mainCount) {
+      Alert.alert(
+        'Chưa đủ số',
+        `Hãy nhập ít nhất ${game.mainCount} số trong khoảng ${game.mainMin}–${game.mainMax}, cách nhau bởi dấu cách hoặc phẩy.`
+      );
+      return;
+    }
+    setMain(uniq.slice(0, game.mainCount).sort((a, b) => b - a));
+    if (game.special && uniq.length > game.mainCount) {
+      const sp = uniq[game.mainCount];
+      if (sp >= game.special.min && sp <= game.special.max) setSpecial([sp]);
+    }
+    setQuick('');
+  };
+
+  // Công cụ quét: tự tìm kết quả trên mạng theo ngày đã chọn
   const onSearchOnline = async () => {
     setSearching(true);
     try {
       const iso = toISODate(date);
-      const found = await searchResultOnline(gameId, iso);
-      if (!found) {
+      const info = await searchResultOnline(gameId, iso);
+      if (info && info.found) {
+        fillFromDraw(info.found);
+        const { evaluatedCount } = await inputResult(gameId, info.found);
+        const related = predictions.filter((p) => p.gameId === gameId);
+        setComparison({ actual: info.found, evaluatedCount, related });
         Alert.alert(
-          'Không tìm thấy kết quả',
-          `Không có kết quả quay cho ngày ${formatDateVN(date)}. Có thể hôm đó không quay thưởng hoặc dữ liệu chưa cập nhật. Hãy chọn đúng ngày quay, hoặc nhập thủ công bên dưới.`
+          'Đã tìm thấy & lưu',
+          `Kết quả ngày ${formatDateVN(info.found.date)} (nguồn: ${info.source || 'mạng'}) đã được điền (lớn → bé) và lưu. ` +
+            (evaluatedCount > 0
+              ? `Đã so sánh ${evaluatedCount} dự đoán; AI đã tinh chỉnh tham số.`
+              : 'Chưa có dự đoán nào để so sánh.')
         );
-        return;
+      } else {
+        Alert.alert(
+          'Không có kết quả',
+          `Không tìm thấy kết quả ngày ${formatDateVN(date)}${
+            info && info.latestDate ? ` (dữ liệu mới nhất đến ${formatDateVN(info.latestDate)})` : ''
+          }. Có thể hôm đó không quay thưởng hoặc nguồn chưa cập nhật. Hãy chọn đúng ngày quay, hoặc nhập thủ công bên dưới.`
+        );
       }
-      // điền vào ô nhập để bạn xem
-      if (game.type === 'digit3') setD3((found.special || []).map((s) => String(s)));
-      else {
-        setMain(found.main);
-        setSpecial(found.special || []);
-      }
-      // lưu + so sánh + AI tinh chỉnh ngay
-      const { evaluatedCount } = await inputResult(gameId, found);
-      const related = predictions.filter((p) => p.gameId === gameId);
-      setComparison({ actual: found, evaluatedCount, related });
-      Alert.alert(
-        'Đã tìm thấy & lưu',
-        `Kết quả ngày ${formatDateVN(found.date)} đã được tải về và lưu. ` +
-          (evaluatedCount > 0
-            ? `Đã so sánh ${evaluatedCount} dự đoán; AI đã tinh chỉnh tham số mô hình.`
-            : 'Chưa có dự đoán nào để so sánh.')
-      );
     } catch (e) {
-      Alert.alert(
-        'Lỗi mạng',
-        'Không tải được dữ liệu từ Internet. Kiểm tra kết nối rồi thử lại, hoặc nhập thủ công.'
-      );
+      Alert.alert('Lỗi mạng', 'Không tải được dữ liệu từ Internet. Kiểm tra kết nối rồi thử lại, hoặc nhập thủ công.');
     } finally {
       setSearching(false);
     }
@@ -173,7 +203,7 @@ export default function ResultInputScreen({ route, navigation }) {
         style={{ marginTop: 4 }}
       />
       <AppText muted size={11} style={{ textAlign: 'center', marginTop: 8 }}>
-        Tự tải kết quả quay ngày {formatDateVN(date)} từ Internet, lưu và so sánh ngay.
+        Tự quét kết quả ngày {formatDateVN(date)} từ minhchinh.com (ưu tiên), rồi điền + lưu + so sánh.
         Hoặc nhập thủ công bên dưới.
       </AppText>
 
@@ -215,8 +245,34 @@ export default function ResultInputScreen({ route, navigation }) {
           </View>
         ) : (
           <View>
+            <AppText muted size={12} style={{ marginBottom: 6 }}>
+              ⚡ Nhập nhanh: gõ các số cách nhau bởi dấu cách/phẩy{game.special ? ' (số cuối là số đặc biệt)' : ''}
+            </AppText>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+              <TextInput
+                value={quick}
+                onChangeText={setQuick}
+                keyboardType="number-pad"
+                placeholder={`VD: 32 31 24 11 5${game.special ? ' 7' : ''}`}
+                placeholderTextColor={theme.textMuted}
+                style={{
+                  flex: 1,
+                  borderWidth: 1,
+                  borderColor: theme.border,
+                  borderRadius: 10,
+                  color: theme.text,
+                  fontSize: 16,
+                  fontWeight: '700',
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  backgroundColor: theme.card,
+                }}
+              />
+              <Button title="Điền" onPress={applyQuick} style={{ paddingHorizontal: 18 }} />
+            </View>
+            <Divider />
             <AppText muted size={12} style={{ marginBottom: 8 }}>
-              {game.mainCount} số chính ({game.mainMin}–{game.mainMax})
+              {game.mainCount} số chính ({game.mainMin}–{game.mainMax}) — chỉnh tay nếu cần
             </AppText>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
               {main.map((v, i) => (
