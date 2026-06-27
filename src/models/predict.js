@@ -139,6 +139,177 @@ export function evalMainHits(gameId, history, actual, modelId, params, adaptiveW
   return hits;
 }
 
+// ====== MÔ PHỎNG MONTE CARLO ======
+// Giới hạn tối đa số lần mô phỏng (cân bằng độ ổn định và độ mượt trên điện thoại)
+export const SIM_MAX = 1000;
+
+// Xác suất 1 số xuất hiện trong 1 kỳ (dùng để ước lượng "kỳ vọng trúng")
+function frequencyProb(sets, min, max) {
+  const counts = {};
+  for (let n = min; n <= max; n++) counts[n] = 0;
+  let total = 0;
+  for (const s of sets) {
+    total++;
+    for (const x of s) if (x >= min && x <= max) counts[x]++;
+  }
+  const denom = total || 1;
+  const prob = {};
+  for (let n = min; n <= max; n++) prob[n] = counts[n] / denom;
+  return prob;
+}
+
+// Lấy mẫu 1 bộ gồm `count` số khác nhau, có trọng số theo điểm số (kèm epsilon)
+function weightedSampleSet(scores, count, min, max) {
+  const pool = [];
+  let sum = 0;
+  for (let n = min; n <= max; n++) {
+    const w = (scores[n] || 0) + 1e-3;
+    pool.push([n, w]);
+    sum += w;
+  }
+  const chosen = new Set();
+  let guard = 0;
+  while (chosen.size < count && guard < count * 60) {
+    guard++;
+    let r = Math.random() * sum;
+    let pick = pool[pool.length - 1][0];
+    for (let i = 0; i < pool.length; i++) {
+      r -= pool[i][1];
+      if (r <= 0) {
+        pick = pool[i][0];
+        break;
+      }
+    }
+    chosen.add(pick);
+  }
+  for (let n = min; chosen.size < count && n <= max; n++) chosen.add(n);
+  return [...chosen].sort((a, b) => a - b);
+}
+
+function expectedHits(set, prob) {
+  let e = 0;
+  for (const x of set) e += prob[x] || 0;
+  return e;
+}
+
+function digitProb(draws) {
+  const counts = new Array(10).fill(0);
+  let total = 0;
+  for (const d of draws) {
+    for (const c of d.digits || []) {
+      if (c >= 0 && c <= 9) {
+        counts[c]++;
+        total++;
+      }
+    }
+  }
+  const denom = total || 1;
+  const prob = {};
+  for (let i = 0; i < 10; i++) prob[i] = counts[i] / denom;
+  return prob;
+}
+
+function digitExpected(nums, prob) {
+  let e = 0;
+  for (const s of nums) {
+    for (const ch of String(s)) {
+      const d = parseInt(ch, 10);
+      if (!isNaN(d)) e += prob[d] || 0;
+    }
+  }
+  return e;
+}
+
+// Dự đoán bằng mô phỏng: chạy `n` lần, mỗi lần sinh 1 bộ số theo phân phối của
+// mô hình, đánh giá "kỳ vọng trúng" dựa trên tần suất lịch sử, rồi chọn bộ tốt nhất.
+export function predictSimulated(gameId, draws, modelId, params, modelStat = {}, n = 100) {
+  const game = GAMES[gameId];
+  const p = { ...DEFAULT_PARAMS[modelId], ...(params || {}) };
+  const adaptiveWeights = modelStat.adaptiveWeights || DEFAULT_ADAPTIVE_WEIGHTS;
+  const drawCount = draws ? draws.length : 0;
+  const N = Math.max(1, Math.min(Math.round(n) || 100, SIM_MAX));
+
+  if (game.type === 'digit3') {
+    const dScores = digitScores(modelId, draws || [], p, adaptiveWeights);
+    const dprob = digitProb(draws || []);
+    let best = null;
+    let bestE = -1;
+    for (let i = 0; i < N; i++) {
+      const cand = generateDigitNumbers(dScores, game.sets, game.digitsPerSet);
+      const e = digitExpected(cand, dprob);
+      if (e > bestE) {
+        bestE = e;
+        best = cand;
+      }
+    }
+    const totalDigits = game.sets * game.digitsPerSet;
+    return {
+      gameId,
+      gameType: 'digit3',
+      model: modelId,
+      modelName: MODEL_META[modelId].name,
+      numbers: best || generateDigitNumbers(dScores, game.sets, game.digitsPerSet),
+      special: [],
+      confidence: confidenceFor(modelId, drawCount, modelStat.hitRate),
+      expectedHits: Math.round(bestE * 100) / 100,
+      expectedMax: totalDigits,
+      accuracy: totalDigits ? bestE / totalDigits : 0,
+      sims: N,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  // standard
+  const mainSets = (draws || []).map((d) => d.main || []);
+  const scores = poolScores(modelId, mainSets, game.mainMin, game.mainMax, p, adaptiveWeights);
+  const prob = frequencyProb(mainSets, game.mainMin, game.mainMax);
+  const sampleScores = modelId === 'random' ? randomScores(game.mainMin, game.mainMax) : scores;
+  let best = null;
+  let bestE = -1;
+  for (let i = 0; i < N; i++) {
+    const cand = weightedSampleSet(sampleScores, game.mainCount, game.mainMin, game.mainMax);
+    const e = expectedHits(cand, prob);
+    if (e > bestE) {
+      bestE = e;
+      best = cand;
+    }
+  }
+
+  let special = [];
+  if (game.special) {
+    const specSets = (draws || []).map((d) => d.special || []).filter((s) => s.length > 0);
+    const sScores = poolScores(modelId, specSets, game.special.min, game.special.max, p, adaptiveWeights);
+    const sProb = frequencyProb(specSets, game.special.min, game.special.max);
+    const sSample = modelId === 'random' ? randomScores(game.special.min, game.special.max) : sScores;
+    let sBest = null;
+    let sBestE = -1;
+    for (let i = 0; i < N; i++) {
+      const c = weightedSampleSet(sSample, game.special.count, game.special.min, game.special.max);
+      const e = expectedHits(c, sProb);
+      if (e > sBestE) {
+        sBestE = e;
+        sBest = c;
+      }
+    }
+    special = sBest || [];
+  }
+
+  return {
+    gameId,
+    gameType: 'standard',
+    model: modelId,
+    modelName: MODEL_META[modelId].name,
+    numbers: best,
+    special,
+    confidence: confidenceFor(modelId, drawCount, modelStat.hitRate),
+    expectedHits: Math.round(bestE * 100) / 100,
+    expectedMax: game.mainCount,
+    accuracy: game.mainCount ? bestE / game.mainCount : 0,
+    sims: N,
+    createdAt: new Date().toISOString(),
+  };
+}
+
 // API chính
 // draws: mảng kỳ quay đã chuẩn hóa (cũ -> mới)
 // modelStat: { hitRate, adaptiveWeights } (tùy chọn) cho mô hình adaptive
