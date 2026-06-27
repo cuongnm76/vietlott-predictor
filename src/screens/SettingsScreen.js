@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, ScrollView, TouchableOpacity, Text, Alert } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { useApp } from '../context/AppContext';
-import { MODEL_IDS, MODEL_META, PARAM_RANGES } from '../constants';
+import { MODEL_IDS, MODEL_META, PARAM_RANGES, SIM_RANGE } from '../constants';
 import { Card, AppText, Button, SectionTitle, Divider } from '../components/ui';
 
 const THEME_OPTIONS = [
@@ -86,6 +86,39 @@ export default function SettingsScreen() {
             );
           })}
         </View>
+      </Card>
+
+      <SectionTitle>Mô phỏng dự đoán</SectionTitle>
+      <Card>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+          <AppText weight="700" size={14}>
+            Số lần mô phỏng (n)
+          </AppText>
+          <AppText weight="800" color={theme.primary}>
+            {settings.simulations || SIM_RANGE.default}
+          </AppText>
+        </View>
+        <Slider
+          minimumValue={SIM_RANGE.min}
+          maximumValue={SIM_RANGE.max}
+          step={SIM_RANGE.step}
+          value={settings.simulations || SIM_RANGE.default}
+          onSlidingComplete={(v) => updateSettings({ simulations: Math.round(v) })}
+          minimumTrackTintColor={theme.primary}
+          maximumTrackTintColor={theme.border}
+          thumbTintColor={theme.primary}
+        />
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          <AppText muted size={11}>
+            {SIM_RANGE.min}
+          </AppText>
+          <AppText muted size={11}>
+            {SIM_RANGE.max} (tối đa)
+          </AppText>
+        </View>
+        <AppText muted size={12} style={{ marginTop: 8 }}>
+          Mỗi lần "Tạo dự đoán", từng mô hình sẽ mô phỏng n bộ số rồi chọn bộ có kỳ vọng trúng cao nhất. n càng lớn càng ổn định nhưng chậm hơn một chút; thường n = 100–300 là đủ (kết quả gần như hội tụ trước khi đạt 1000).
+        </AppText>
       </Card>
 
       <SectionTitle right={<Button title="Đặt lại" variant="outline" onPress={onReset} style={{ paddingVertical: 6, paddingHorizontal: 12 }} />}>
