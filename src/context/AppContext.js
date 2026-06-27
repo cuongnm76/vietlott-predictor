@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { Appearance } from 'react-native';
-import { DEFAULT_PARAMS, STORAGE_KEYS, GAMES, MODEL_IDS } from '../constants';
+import { DEFAULT_PARAMS, STORAGE_KEYS, GAMES, MODEL_IDS, SIM_RANGE } from '../constants';
 import { getTheme } from '../theme';
 import { getJSON, setJSON, getString } from '../storage/storage';
 import { updateAllGames, getDraws, getLastUpdate, fetchResultByDate } from '../data/dataService';
-import { predict } from '../models/predict';
+import { predict, predictSimulated } from '../models/predict';
 import { recordResult, emptyStats } from '../models/learning';
 
 const AppContext = createContext(null);
@@ -13,6 +13,7 @@ export const useApp = () => useContext(AppContext);
 const DEFAULT_SETTINGS = {
   themeMode: 'system', // 'system' | 'light' | 'dark'
   defaultModel: 'adaptive',
+  simulations: SIM_RANGE.default, // số lần mô phỏng mỗi dự đoán
   params: JSON.parse(JSON.stringify(DEFAULT_PARAMS)),
 };
 
@@ -126,20 +127,21 @@ export function AppProvider({ children }) {
     [drawsByGame, settings, modelStats, paramsFor]
   );
 
-  // Tạo dự đoán cho TẤT CẢ 4 mô hình cùng lúc
+  // Tạo dự đoán cho TẤT CẢ 4 mô hình cùng lúc, mỗi mô hình mô phỏng n lần
   const makeAllPredictions = useCallback(
     (gameId) => {
       const draws = drawsByGame[gameId] || [];
       const batch = Date.now();
+      const n = settings.simulations || SIM_RANGE.default;
       return MODEL_IDS.map((model) => {
         const stat = modelStats[gameId]?.[model] || {};
-        const pred = predict(gameId, draws, model, paramsFor(gameId, model), stat);
+        const pred = predictSimulated(gameId, draws, model, paramsFor(gameId, model), stat, n);
         pred.id = newId();
         pred.batch = batch;
         return pred;
       });
     },
-    [drawsByGame, modelStats, paramsFor]
+    [drawsByGame, modelStats, paramsFor, settings.simulations]
   );
 
   // Lưu nhiều dự đoán cùng lúc
