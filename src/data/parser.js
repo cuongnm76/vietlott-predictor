@@ -38,22 +38,26 @@ export function normalizeDraw(game, rec) {
     const pairKey = findSpecialPairKey(result);
     let pair = Array.isArray(result[pairKey]) ? result[pairKey] : [];
     pair = pair.map((s) => String(s).padStart(3, '0')).slice(0, game.sets);
-    // Gom mọi chữ số từ tất cả giải để phân tích tần suất
+    // Gom mọi chữ số + toàn bộ bộ số từ tất cả giải (lưu đầy đủ kết quả)
     const digits = [];
-    Object.values(result).forEach((arr) => {
+    const all = [];
+    const prizes = {};
+    Object.keys(result).forEach((k) => {
+      const arr = result[k];
       if (Array.isArray(arr)) {
-        arr.forEach((s) => {
-          String(s)
-            .split('')
-            .forEach((c) => {
-              const d = parseInt(c, 10);
-              if (!isNaN(d)) digits.push(d);
-            });
+        const nums = arr.map((s) => String(s).padStart(3, '0'));
+        prizes[k] = nums;
+        nums.forEach((s) => {
+          all.push(s);
+          s.split('').forEach((c) => {
+            const d = parseInt(c, 10);
+            if (!isNaN(d)) digits.push(d);
+          });
         });
       }
     });
     if (pair.length === 0) return null;
-    return { date, id, special: pair, digits };
+    return { date, id, special: pair, all, digits, prizes };
   }
 
   // standard
