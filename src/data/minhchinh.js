@@ -77,21 +77,51 @@ export function parseStandardTable(text, game) {
       if (!isNaN(sp) && sp >= game.special.min && sp <= game.special.max) special = [sp];
     }
     const date = `${yyyy}-${mm}-${dd}`;
-    if (!out.find((o) => o.date === date)) out.push({ date, id: 'mc', main, special });
+    // dedupe theo ngày + bộ số -> Lotto 5/35 (2 kỳ/ngày) giữ cả hai kỳ vì số khác nhau
+    const key = date + '|' + main.join('-');
+    if (!out.find((o) => o.date + '|' + o.main.join('-') === key)) {
+      out.push({ date, id: 'mc', main, special });
+    }
   }
   return out;
 }
 
-// Phân tích giải Đặc biệt cho Max 3D / Max 3D Pro (2 số 3 chữ số đầu tiên)
-export function parse3DSpecial(text, game) {
-  const idx = text.search(/Đặc biệt/i);
-  if (idx < 0) return null;
-  const region = text.slice(idx, idx + 140);
-  const triples = region.match(/\b\d{3}\b/g) || [];
-  if (triples.length < game.sets) return null;
-  const pair = triples.slice(0, game.sets);
-  const digits = pair.join('').split('').map((c) => parseInt(c, 10));
-  return { special: pair, digits };
+// Cấu trúc giải của Max 3D / Max 3D Pro: Đặc biệt(2) Nhất(4) Nhì(6) Ba(8) = 20 bộ
+const PRIZE_SPECS_3D = [
+  { key: 'special', label: 'Đặc biệt', count: 2 },
+  { key: 'first', label: 'Giải nhất', count: 4 },
+  { key: 'second', label: 'Giải nhì', count: 6 },
+  { key: 'third', label: 'Giải ba', count: 8 },
+];
+
+// Phân tích TOÀN BỘ kết quả Max 3D / Max 3D Pro (mọi giải, 20 bộ số 3 chữ số).
+// Max 3D: cột kết quả nằm SAU "giá trị: số_lượng" -> bỏ số lượng.
+// Max 3D Pro: cột kết quả nằm NGAY SAU nhãn giải.
+export function parse3DFull(text, game) {
+  const isPro = game.id === 'max3dpro';
+  const prizes = {};
+  const all = [];
+  for (const spec of PRIZE_SPECS_3D) {
+    const li = text.indexOf(spec.label);
+    if (li < 0) continue;
+    let region;
+    if (isPro) {
+      region = text.slice(li + spec.label.length, li + spec.label.length + 70);
+    } else {
+      const colon = text.indexOf(':', li);
+      const base = colon >= 0 ? colon + 1 : li + spec.label.length;
+      region = text.slice(base, base + 80).replace(/^\s*\d+/, ''); // bỏ số lượng người trúng
+    }
+    const triples = (region.match(/\b\d{3}\b/g) || []).slice(0, spec.count);
+    if (triples.length) {
+      prizes[spec.key] = triples;
+      all.push(...triples);
+    }
+  }
+  const special = prizes.special || [];
+  if (special.length < game.sets) return null;
+  const digits = all.join('').split('').map((c) => parseInt(c, 10));
+  return { special: special.slice(0, game.sets), all, digits, prizes };
 }
 
 // Lấy kết quả 1 giải theo ngày. Trả về { found, latestDate }.
@@ -102,10 +132,18 @@ export async function getMinhChinhResult(gameId, dateISO) {
   if (game.type === 'digit3') {
     const html = await fetchHtml(dateUrl(gameId, dd, mm, yyyy));
     const text = stripTags(html);
-    const parsed = parse3DSpecial(text, game);
-    if (!parsed) return { found: null, latestDate: null };
+    const parsed = parse3DFull(text, game);
+    if (!parsed) return { found: null, extras: [], latestDate: null };
     return {
-      found: { date: dateISO, id: 'mc', special: parsed.special, digits: parsed.digits },
+      found: {
+        date: dateISO,
+        id: 'mc',
+        special: parsed.special, // cặp Đặc biệt (dùng để so dự đoán)
+        all: parsed.all, // toàn bộ 20 bộ số của mọi giải
+        digits: parsed.digits, // mọi chữ số (cho thống kê tần suất)
+        prizes: parsed.prizes, // {special, first, second, third}
+      },
+      extras: [],
       latestDate: null,
     };
   }
@@ -114,9 +152,9 @@ export async function getMinhChinhResult(gameId, dateISO) {
   const html = await fetchHtml(liveUrl(gameId));
   const text = stripTags(html);
   const rows = parseStandardTable(text, game);
-  const found = rows.find((r) => r.date === dateISO) || null;
-  const latestDate = rows.length
-    ? rows.map((r) => r.date).sort().slice(-1)[0]
-    : null;
-  return { found, latestDate };
+  const matches = rows.filter((r) => r.date === dateISO);
+  const found = matches[0] || null; // Lotto 5/35: kỳ 21h (liệt kê trước)
+  const extras = matches.slice(1); // Lotto 5/35: kỳ 13h (lưu kèm)
+  const latestDate = rows.length ? rows.map((r) => r.date).sort().slice(-1)[0] : null;
+  return { found, extras, latestDate };
 }
