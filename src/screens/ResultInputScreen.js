@@ -153,13 +153,16 @@ export default function ResultInputScreen({ route, navigation }) {
       const iso = toISODate(date);
       const info = await searchResultOnline(gameId, iso);
       if (info && info.found) {
+        const extras = info.extras || [];
         fillFromDraw(info.found);
-        const { evaluatedCount } = await inputResult(gameId, info.found);
+        const { evaluatedCount } = await inputResult(gameId, info.found, extras);
         const related = predictions.filter((p) => p.gameId === gameId);
         setComparison({ actual: info.found, evaluatedCount, related });
         Alert.alert(
           'Đã tìm thấy & lưu',
           `Kết quả ngày ${formatDateVN(info.found.date)} (nguồn: ${info.source || 'mạng'}) đã được điền (lớn → bé) và lưu. ` +
+            (extras.length > 0 ? `Đã lưu thêm ${extras.length} kỳ khác cùng ngày (vd Lotto kỳ 13h). ` : '') +
+            (game.type === 'digit3' ? 'Đã lưu toàn bộ các giải. ' : '') +
             (evaluatedCount > 0
               ? `Đã so sánh ${evaluatedCount} dự đoán; AI đã tinh chỉnh tham số.`
               : 'Chưa có dự đoán nào để so sánh.')
