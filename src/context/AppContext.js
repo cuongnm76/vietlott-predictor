@@ -178,12 +178,16 @@ export function AppProvider({ children }) {
 
   // Nhập kết quả thực tế: lưu vào dữ liệu, đánh giá dự đoán, AI tự học
   const inputResult = useCallback(
-    async (gameId, actualDraw) => {
-      // 1) thêm vào dữ liệu lịch sử (để mô hình học)
+    async (gameId, actualDraw, extras = []) => {
+      // 1) thêm vào dữ liệu lịch sử (để mô hình học) — giữ cả kỳ khác cùng ngày (Lotto 13h & 21h)
+      const keyOf = (d) =>
+        d.date + '|' + ((d.main && d.main.join('-')) || (d.special && d.special.join('-')) || '');
       const draws = [...(drawsByGame[gameId] || [])];
-      const existsIdx = draws.findIndex((d) => d.date === actualDraw.date);
-      if (existsIdx >= 0) draws[existsIdx] = actualDraw;
-      else draws.push(actualDraw);
+      for (const nd of [actualDraw, ...(extras || [])]) {
+        const idx = draws.findIndex((d) => keyOf(d) === keyOf(nd));
+        if (idx >= 0) draws[idx] = nd;
+        else draws.push(nd);
+      }
       draws.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
       const nextDraws = { ...drawsByGame, [gameId]: draws };
       setDrawsByGame(nextDraws);
