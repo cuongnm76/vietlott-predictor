@@ -16,7 +16,7 @@ export default function PredictionScreen({ route, navigation }) {
   const { gameId } = route.params;
   const game = GAMES[gameId];
   const { theme, settings, makeAllPredictions, savePredictions, drawsByGame, modelStats } = useApp();
-  const [result, setResult] = useState(null);
+  const [results, setResults] = useState(null);
   const [saving, setSaving] = useState(false);
 
   useLayoutEffect(() => {
@@ -28,10 +28,9 @@ export default function PredictionScreen({ route, navigation }) {
   const generate = async () => {
     setSaving(true);
     await new Promise((r) => setTimeout(r, 30));
-    // Vẫn mô phỏng tất cả mô hình + lưu ngầm để AI học, nhưng chỉ hiển thị bộ tốt nhất
+    // Mỗi mô hình chạy mô phỏng rồi đưa ra 1 bộ số; hiển thị theo từng mô hình và tự lưu
     const list = makeAllPredictions(gameId);
-    const sorted = [...list].sort((a, b) => (b.accuracy || 0) - (a.accuracy || 0));
-    setResult(sorted[0]);
+    setResults(list);
     await savePredictions(list);
     setSaving(false);
   };
@@ -63,39 +62,43 @@ export default function PredictionScreen({ route, navigation }) {
         loading={saving}
       />
 
-      {result ? (
-        <Card style={{ marginTop: 16 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <Pill label={result.modelName} color={game.color} />
-            <View style={{ alignItems: 'flex-end' }}>
-              <AppText muted size={11}>
-                Độ tin cậy
-              </AppText>
-              <AppText weight="800" size={18} color={confidenceColor(result.confidence, theme)}>
-                {pct(result.confidence)}
-              </AppText>
-            </View>
-          </View>
-          <View style={{ alignItems: 'center', paddingVertical: 8 }}>
-            <NumberRow
-              numbers={result.numbers}
-              special={result.special}
-              digit3={game.type === 'digit3'}
-              size={44}
-            />
-          </View>
-          {game.special ? (
-            <AppText muted size={11} style={{ textAlign: 'center', marginTop: 4 }}>
-              🟧 {game.special.label}
-            </AppText>
-          ) : null}
-          <AppText muted size={11} style={{ textAlign: 'center', marginTop: 12 }}>
-            ✓ Đã tự động lưu vào Lịch sử
+      {results ? (
+        <>
+          <AppText muted size={11} style={{ textAlign: 'center', marginTop: 14, marginBottom: 4 }}>
+            ✓ Mỗi mô hình đã mô phỏng và đưa ra một bộ số. Tất cả đã tự động lưu vào Lịch sử.
           </AppText>
-        </Card>
+          {results.map((p) => (
+            <Card key={p.id} style={{ marginTop: 12 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <Pill label={p.modelName} color={game.color} />
+                <View style={{ alignItems: 'flex-end' }}>
+                  <AppText muted size={11}>
+                    Độ tin cậy
+                  </AppText>
+                  <AppText weight="800" size={16} color={confidenceColor(p.confidence, theme)}>
+                    {pct(p.confidence)}
+                  </AppText>
+                </View>
+              </View>
+              <View style={{ alignItems: 'center', paddingVertical: 4 }}>
+                <NumberRow
+                  numbers={p.numbers}
+                  special={p.special}
+                  digit3={game.type === 'digit3'}
+                  size={42}
+                />
+              </View>
+              {game.special ? (
+                <AppText muted size={11} style={{ textAlign: 'center', marginTop: 4 }}>
+                  🟧 {game.special.label}
+                </AppText>
+              ) : null}
+            </Card>
+          ))}
+        </>
       ) : (
         <AppText muted size={12} style={{ marginTop: 14, textAlign: 'center' }}>
-          Bấm nút trên để tạo dự đoán. Kết quả tốt nhất sẽ hiển thị và tự động lưu vào Lịch sử.
+          Bấm nút trên: mỗi mô hình sẽ mô phỏng rồi đưa ra bộ số riêng. Tất cả tự động lưu vào Lịch sử.
         </AppText>
       )}
 
