@@ -27,6 +27,16 @@ function findSpecialPairKey(resultObj) {
   );
 }
 
+// Chuẩn hóa tên giải về khóa chung: special / first / second / third
+function normalizePrizeKey(k) {
+  const s = (k || '').toLowerCase();
+  if (s.includes('đặc') || s.includes('biệt')) return 'special';
+  if (s.includes('nhất') || s.includes('nhat')) return 'first';
+  if (s.includes('nhì') || s.includes('nhi')) return 'second';
+  if (s.includes('ba')) return 'third';
+  return null;
+}
+
 // Chuẩn hóa 1 bản ghi về dạng dùng chung
 export function normalizeDraw(game, rec) {
   if (!rec) return null;
@@ -46,7 +56,8 @@ export function normalizeDraw(game, rec) {
       const arr = result[k];
       if (Array.isArray(arr)) {
         const nums = arr.map((s) => String(s).padStart(3, '0'));
-        prizes[k] = nums;
+        const nk = normalizePrizeKey(k);
+        if (nk) prizes[nk] = nums; // khóa chuẩn hóa: special/first/second/third
         nums.forEach((s) => {
           all.push(s);
           s.split('').forEach((c) => {
