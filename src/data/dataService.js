@@ -124,11 +124,13 @@ async function mergeDraw(gameId, draw) {
 //   extras: các kỳ khác cùng ngày (Lotto 5/35 có kỳ 13h ngoài kỳ 21h)
 export async function findResultByDate(gameId, dateISO) {
   let latestDate = null;
+  let note = null; // thông tin gỡ lỗi khi không tìm thấy (hiện cho người dùng)
   // 1) Nguồn ưu tiên: minhchinh.com
   try {
     const mc = await getMinhChinhResult(gameId, dateISO);
     if (mc) {
       latestDate = mc.latestDate || latestDate;
+      if (mc.error) note = mc.error;
       if (mc.found) {
         const extras = mc.extras || [];
         await mergeDraw(gameId, mc.found);
@@ -138,7 +140,7 @@ export async function findResultByDate(gameId, dateISO) {
       }
     }
   } catch (e) {
-    // bỏ qua, chuyển sang nguồn dự phòng
+    note = 'minhchinh: ' + (e && e.message ? e.message : e);
   }
   // 2) Dự phòng: dữ liệu GitHub (vietlott-data)
   try {
@@ -151,9 +153,9 @@ export async function findResultByDate(gameId, dateISO) {
       const extras = draws.filter((d) => d.date === dateISO && drawKey(d) !== k0);
       return { found: gh.found, extras, source: 'vietlott-data', latestDate };
     }
-    return { found: null, extras: [], source: null, latestDate };
+    return { found: null, extras: [], source: null, latestDate, note };
   } catch (e) {
-    return { found: null, extras: [], source: null, latestDate };
+    return { found: null, extras: [], source: null, latestDate, note };
   }
 }
 
