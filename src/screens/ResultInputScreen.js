@@ -194,7 +194,9 @@ export default function ResultInputScreen({ route, navigation }) {
           'Không có kết quả',
           `Không tìm thấy kết quả ngày ${formatDateVN(date)}${
             info && info.latestDate ? ` (dữ liệu mới nhất đến ${formatDateVN(info.latestDate)})` : ''
-          }. Có thể hôm đó không quay thưởng hoặc nguồn chưa cập nhật. Hãy chọn đúng ngày quay, hoặc nhập thủ công bên dưới.`
+          }. Có thể hôm đó không quay thưởng hoặc nguồn chưa cập nhật. Hãy chọn đúng ngày quay, hoặc nhập thủ công bên dưới.${
+            info && info.note ? `\n\n[Chi tiết kỹ thuật: ${info.note}]` : ''
+          }`
         );
       }
     } catch (e) {
