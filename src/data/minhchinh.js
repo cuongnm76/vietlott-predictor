@@ -47,17 +47,25 @@ function stripTags(html) {
     .trim();
 }
 
-// Phân tích bảng "15 kỳ gần nhất" cho giải dạng số
+// Phân tích bảng "15 kỳ gần nhất" cho giải dạng số.
+// Lotto 5/35: nhận diện theo hậu tố giờ (21h/13h) — chỉ có ở hàng bảng nên bền vững,
+//   không phụ thuộc chữ có dấu (đã chuẩn hóa Unicode NFC để tránh lệch tổ hợp dấu).
 export function parseStandardTable(text, game) {
-  let s = text.search(/gần nhất/i);
-  let region = s >= 0 ? text.slice(s) : text;
-  const stop = region.search(/Thống kê (bộ số|tần suất)/i);
-  if (stop > 0) region = region.slice(0, stop);
+  const norm = (text || '').normalize('NFC');
+  const isLotto = game.id === 'lotto535';
+  let region;
+  if (isLotto) {
+    region = norm;
+  } else {
+    let s = norm.search(/gần nhất/i);
+    region = s >= 0 ? norm.slice(s) : norm;
+    const stop = region.search(/Thống kê (bộ số|tần suất)/i);
+    if (stop > 0) region = region.slice(0, stop);
+  }
 
   const out = [];
-  const isLotto = game.id === 'lotto535';
   const dateRe = isLotto
-    ? /(\d{2})\/(\d{2})\/(\d{2})(?:\s*\d{1,2}h)?/g
+    ? /(\d{2})\/(\d{2})\/(\d{2})\s+(\d{1,2})h/g
     : /(\d{2})\/(\d{2})\/(\d{4})/g;
   let m;
   while ((m = dateRe.exec(region))) {
@@ -124,37 +132,75 @@ export function parse3DFull(text, game) {
   return { special: special.slice(0, game.sets), all, digits, prizes };
 }
 
+// Trích ngày kết quả đang hiển thị trên trang 3D (ngày cuối cùng ngay trước bảng
+// giải "Đặc biệt"). Dùng để xác minh trang có đúng ngày yêu cầu hay không, vì
+// URL theo ngày có thể trả về kỳ gần nhất khi ngày đó không quay thưởng.
+export function extract3DDate(text) {
+  const norm = (text || '').normalize('NFC');
+  const idx = norm.search(/Đặc biệt/i);
+  const region = idx > 0 ? norm.slice(0, idx) : norm;
+  const re = /(\d{2})\/(\d{2})\/(\d{4})/g;
+  let m;
+  let last = null;
+  while ((m = re.exec(region))) last = m;
+  if (!last) return null;
+  return `${last[3]}-${last[2]}-${last[1]}`;
+}
+
 // Lấy kết quả 1 giải theo ngày. Trả về { found, latestDate }.
 export async function getMinhChinhResult(gameId, dateISO) {
   const game = GAMES[gameId];
   const [yyyy, mm, dd] = dateISO.split('-');
 
   if (game.type === 'digit3') {
-    const html = await fetchHtml(dateUrl(gameId, dd, mm, yyyy));
-    const text = stripTags(html);
-    const parsed = parse3DFull(text, game);
-    if (!parsed) return { found: null, extras: [], latestDate: null };
-    return {
-      found: {
-        date: dateISO,
-        id: 'mc',
-        special: parsed.special, // cặp Đặc biệt (dùng để so dự đoán)
-        all: parsed.all, // toàn bộ 20 bộ số của mọi giải
-        digits: parsed.digits, // mọi chữ số (cho thống kê tần suất)
-        prizes: parsed.prizes, // {special, first, second, third}
-      },
-      extras: [],
-      latestDate: null,
-    };
+    try {
+      const text = stripTags(await fetchHtml(dateUrl(gameId, dd, mm, yyyy)));
+      // Xác minh ngày kết quả trên trang khớp ngày yêu cầu (tránh nhận nhầm kỳ gần nhất)
+      const pageDate = extract3DDate(text);
+      if (pageDate && pageDate !== dateISO) {
+        return { found: null, extras: [], latestDate: pageDate, error: `Trang chỉ có kết quả ngày ${pageDate}` };
+      }
+      const parsed = parse3DFull(text, game);
+      if (!parsed) return { found: null, extras: [], latestDate: null, error: 'Trang không có dữ liệu giải' };
+      return {
+        found: {
+          date: dateISO,
+          id: 'mc',
+          special: parsed.special, // cặp Đặc biệt (dùng để so dự đoán)
+          all: parsed.all, // toàn bộ 20 bộ số của mọi giải
+          digits: parsed.digits, // mọi chữ số (cho thống kê tần suất)
+          prizes: parsed.prizes, // {special, first, second, third}
+        },
+        extras: [],
+        latestDate: null,
+      };
+    } catch (e) {
+      return { found: null, extras: [], latestDate: null, error: 'Lỗi tải: ' + (e && e.message ? e.message : e) };
+    }
   }
 
-  // giải dạng số: đọc bảng 15 kỳ trên trang trực tiếp
-  const html = await fetchHtml(liveUrl(gameId));
-  const text = stripTags(html);
-  const rows = parseStandardTable(text, game);
-  const matches = rows.filter((r) => r.date === dateISO);
+  // giải dạng số: đọc bảng 15 kỳ (trang trực tiếp); nếu chưa có, thử trang theo ngày
+  let rows = [];
+  let error = null;
+  try {
+    rows = parseStandardTable(stripTags(await fetchHtml(liveUrl(gameId))), game);
+  } catch (e) {
+    error = 'Lỗi tải trang trực tiếp: ' + (e && e.message ? e.message : e);
+  }
+  let matches = rows.filter((r) => r.date === dateISO);
+  if (matches.length === 0) {
+    try {
+      const rows2 = parseStandardTable(stripTags(await fetchHtml(dateUrl(gameId, dd, mm, yyyy))), game);
+      if (rows2.length) {
+        rows = rows2;
+        matches = rows2.filter((r) => r.date === dateISO);
+      }
+    } catch (e) {
+      if (!error) error = 'Lỗi tải trang theo ngày: ' + (e && e.message ? e.message : e);
+    }
+  }
   const found = matches[0] || null; // Lotto 5/35: kỳ 21h (liệt kê trước)
   const extras = matches.slice(1); // Lotto 5/35: kỳ 13h (lưu kèm)
   const latestDate = rows.length ? rows.map((r) => r.date).sort().slice(-1)[0] : null;
-  return { found, extras, latestDate };
+  return { found, extras, latestDate, error: found ? null : error };
 }
