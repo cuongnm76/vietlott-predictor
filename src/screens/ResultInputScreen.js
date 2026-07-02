@@ -7,6 +7,14 @@ import { Card, AppText, Button, SectionTitle, Divider, Pill } from '../component
 import { NumberRow } from '../components/NumberBall';
 import { formatDateVN, toISODate } from '../utils';
 
+// Cấu trúc giải cho Max 3D / Max 3D Pro (nhập/lưu toàn bộ)
+const PRIZE_INPUTS = [
+  { key: 'special', label: 'Đặc biệt', count: 2 },
+  { key: 'first', label: 'Giải nhất', count: 4 },
+  { key: 'second', label: 'Giải nhì', count: 6 },
+  { key: 'third', label: 'Giải ba', count: 8 },
+];
+
 function Stepper({ value, onChange, min, max, theme }) {
   const set = (v) => {
     let n = parseInt(v, 10);
@@ -62,7 +70,7 @@ export default function ResultInputScreen({ route, navigation }) {
     game.type === 'standard' ? Array.from({ length: game.mainCount }, (_, i) => i + game.mainMin) : []
   );
   const [special, setSpecial] = useState(game.special ? [game.special.min] : []);
-  const [d3, setD3] = useState(game.type === 'digit3' ? Array.from({ length: game.sets }, () => '') : []);
+  const [prize3d, setPrize3d] = useState({ special: '', first: '', second: '', third: '' });
   const [comparison, setComparison] = useState(null);
   const [quick, setQuick] = useState('');
 
@@ -78,13 +86,22 @@ export default function ResultInputScreen({ route, navigation }) {
   const buildActual = () => {
     const iso = toISODate(date);
     if (game.type === 'digit3') {
-      const pair = d3.map((s) => s.padStart(3, '0'));
-      if (pair.some((s) => s.length !== 3 || !/^\d{3}$/.test(s))) {
-        Alert.alert('Thiếu dữ liệu', 'Nhập đủ 2 số, mỗi số gồm 3 chữ số (0-9).');
+      const prizes = {};
+      const all = [];
+      for (const spec of PRIZE_INPUTS) {
+        const nums = (String(prize3d[spec.key]).match(/\d{3}/g) || []).slice(0, spec.count);
+        if (nums.length) {
+          prizes[spec.key] = nums;
+          all.push(...nums);
+        }
+      }
+      const special = prizes.special || [];
+      if (special.length < game.sets) {
+        Alert.alert('Thiếu giải Đặc biệt', `Hãy nhập ${game.sets} số (mỗi số 3 chữ số) cho giải Đặc biệt.`);
         return null;
       }
-      const digits = pair.join('').split('').map((c) => parseInt(c, 10));
-      return { date: iso, id: 'manual', special: pair, digits };
+      const digits = all.join('').split('').map((c) => parseInt(c, 10));
+      return { date: iso, id: 'manual', special: special.slice(0, game.sets), all, digits, prizes };
     }
     // standard
     const uniq = new Set(main);
@@ -117,9 +134,14 @@ export default function ResultInputScreen({ route, navigation }) {
       if (!isNaN(d.getTime())) setDate(d);
     }
     if (game.type === 'digit3') {
-      const pair = [...(draw.special || [])].map((s) => String(s).padStart(3, '0'));
-      pair.sort((a, b) => Number(b) - Number(a));
-      setD3(pair);
+      const pr = draw.prizes || {};
+      const toText = (arr) => (arr || []).map((s) => String(s).padStart(3, '0')).join(' ');
+      setPrize3d({
+        special: toText(pr.special && pr.special.length ? pr.special : draw.special),
+        first: toText(pr.first),
+        second: toText(pr.second),
+        third: toText(pr.third),
+      });
     } else {
       setMain([...(draw.main || [])].sort((a, b) => b - a));
       setSpecial(draw.special || []);
@@ -215,35 +237,36 @@ export default function ResultInputScreen({ route, navigation }) {
         {game.type === 'digit3' ? (
           <View>
             <AppText muted size={12} style={{ marginBottom: 8 }}>
-              Nhập 2 số giải Đặc biệt (mỗi số 3 chữ số)
+              Nhập kết quả TẤT CẢ các giải (mỗi số 3 chữ số, cách nhau bởi dấu cách). Bắt buộc giải Đặc biệt.
             </AppText>
-            {d3.map((v, i) => (
-              <TextInput
-                key={i}
-                value={v}
-                onChangeText={(t) => {
-                  const nv = [...d3];
-                  nv[i] = t.replace(/[^0-9]/g, '').slice(0, 3);
-                  setD3(nv);
-                }}
-                keyboardType="number-pad"
-                placeholder={`Số ${i + 1} (vd: 123)`}
-                placeholderTextColor={theme.textMuted}
-                maxLength={3}
-                style={{
-                  borderWidth: 1,
-                  borderColor: theme.border,
-                  borderRadius: 10,
-                  color: theme.text,
-                  fontSize: 22,
-                  fontWeight: '800',
-                  letterSpacing: 6,
-                  textAlign: 'center',
-                  paddingVertical: 12,
-                  marginBottom: 10,
-                  backgroundColor: theme.card,
-                }}
-              />
+            {PRIZE_INPUTS.map((spec) => (
+              <View key={spec.key} style={{ marginBottom: 12 }}>
+                <AppText weight="700" size={13} style={{ marginBottom: 4 }}>
+                  {spec.label}{' '}
+                  <AppText muted size={11}>
+                    ({spec.count} số)
+                  </AppText>
+                </AppText>
+                <TextInput
+                  value={prize3d[spec.key]}
+                  onChangeText={(t) => setPrize3d({ ...prize3d, [spec.key]: t.replace(/[^0-9 ]/g, '') })}
+                  keyboardType="number-pad"
+                  placeholder={spec.key === 'special' ? 'vd: 076 648' : `vd: ${spec.count} số 3 chữ số`}
+                  placeholderTextColor={theme.textMuted}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: theme.border,
+                    borderRadius: 10,
+                    color: theme.text,
+                    fontSize: 18,
+                    fontWeight: '800',
+                    letterSpacing: 2,
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    backgroundColor: theme.card,
+                  }}
+                />
+              </View>
             ))}
           </View>
         ) : (
