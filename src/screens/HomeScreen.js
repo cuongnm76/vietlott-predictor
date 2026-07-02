@@ -65,7 +65,7 @@ export default function HomeScreen({ navigation }) {
         {status ? (
           <AppText muted size={12} style={{ marginTop: 8 }}>
             {status.state === 'error' ? '⚠️ ' : '⏳ '} {status.name}
-            {status.state === 'done' ? ` ✓ (${status.info} kỳ)` : '…'}
+            {status.state === 'done' ? ` ✓ (+${status.info} kỳ mới)` : '…'}
           </AppText>
         ) : null}
         {error ? (
