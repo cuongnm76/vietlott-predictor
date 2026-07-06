@@ -223,6 +223,7 @@ export function AppProvider({ children }) {
                 date: actualDraw.date,
                 numbers: actualDraw.main || actualDraw.special,
                 special: actualDraw.special,
+                all: actualDraw.all || null, // toàn bộ số 3 chữ số (Max 3D) để tô trúng
                 hits: evalMap[p.id].hits,
                 possible: evalMap[p.id].possible,
               },
