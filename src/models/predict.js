@@ -220,6 +220,78 @@ function digitExpected(nums, prob) {
   return e;
 }
 
+// ===== Max 3D / Max 3D Pro: thống kê SỐ 3 CHỮ SỐ trong TOÀN BỘ kỳ quay =====
+// Đếm số lần mỗi số 3 chữ số xuất hiện ở mọi giải (Đặc biệt/Nhất/Nhì/Ba).
+function number3DFreq(draws, decay) {
+  const counts = {};
+  const total = draws.length;
+  let totalDraws = 0;
+  for (let i = 0; i < total; i++) {
+    const d = draws[i];
+    const nums = d.all && d.all.length ? d.all : d.special || [];
+    if (!nums.length) continue;
+    totalDraws++;
+    const w = decay && decay < 1 ? Math.pow(decay, total - 1 - i) : 1;
+    for (const s of nums) {
+      const k = String(s).padStart(3, '0');
+      if (/^\d{3}$/.test(k)) counts[k] = (counts[k] || 0) + w;
+    }
+  }
+  return { counts, totalDraws };
+}
+
+function randomNumber3() {
+  return String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+}
+
+function sampleAnyPair(sets) {
+  const s = new Set();
+  while (s.size < sets) s.add(randomNumber3());
+  return [...s];
+}
+
+// Chọn `sets` số cao điểm nhất (khả năng xuất hiện cao nhất), không trùng.
+function topNumbers(counts, sets) {
+  const keys = Object.keys(counts);
+  keys.sort((a, b) => counts[b] - counts[a] || (Math.random() - 0.5));
+  const picked = keys.slice(0, sets);
+  const set = new Set(picked);
+  while (set.size < sets) set.add(randomNumber3());
+  return [...set];
+}
+
+// Lấy mẫu 1 số theo trọng số tần suất
+function sampleNumberPair(counts, sets) {
+  const entries = Object.entries(counts);
+  let sum = 0;
+  for (const [, w] of entries) sum += w;
+  if (sum <= 0) return sampleAnyPair(sets);
+  const picked = new Set();
+  let guard = 0;
+  while (picked.size < sets && guard < 200) {
+    guard++;
+    let r = Math.random() * sum;
+    let pick = entries[entries.length - 1][0];
+    for (const [k, w] of entries) {
+      r -= w;
+      if (r <= 0) {
+        pick = k;
+        break;
+      }
+    }
+    picked.add(pick);
+  }
+  while (picked.size < sets) picked.add(randomNumber3());
+  return [...picked];
+}
+
+// Hệ số suy giảm theo độ mới cho từng mô hình 3D
+function decay3D(modelId, params) {
+  if (modelId === 'markov') return params.decayFactor ?? 0.85;
+  if (modelId === 'adaptive') return params.decayFactor ?? 0.9;
+  return 1; // frequency: dùng toàn bộ lịch sử
+}
+
 // Dự đoán bằng mô phỏng: chạy `n` lần, mỗi lần sinh 1 bộ số theo phân phối của
 // mô hình, đánh giá "kỳ vọng trúng" dựa trên tần suất lịch sử, rồi chọn bộ tốt nhất.
 export function predictSimulated(gameId, draws, modelId, params, modelStat = {}, n = 100) {
@@ -230,30 +302,37 @@ export function predictSimulated(gameId, draws, modelId, params, modelStat = {},
   const N = Math.max(1, Math.min(Math.round(n) || 100, SIM_MAX));
 
   if (game.type === 'digit3') {
-    const dScores = digitScores(modelId, draws || [], p, adaptiveWeights);
-    const dprob = digitProb(draws || []);
+    // Xác suất mỗi số 3 chữ số xuất hiện trong 1 kỳ quay (dựa trên TOÀN BỘ các giải)
+    const evalStat = number3DFreq(draws || [], 1);
+    const denom = evalStat.totalDraws || 1;
+    const prob = {};
+    for (const k of Object.keys(evalStat.counts)) prob[k] = evalStat.counts[k] / denom;
+    // phân phối để lấy mẫu (frequency: toàn bộ; markov/adaptive: ưu tiên kỳ mới)
+    const sampleStat = modelId === 'random' ? { counts: {} } : number3DFreq(draws || [], decay3D(modelId, p));
     let best = null;
     let bestE = -1;
     for (let i = 0; i < N; i++) {
-      const cand = generateDigitNumbers(dScores, game.sets, game.digitsPerSet);
-      const e = digitExpected(cand, dprob);
+      const cand =
+        modelId === 'random' ? sampleAnyPair(game.sets) : sampleNumberPair(sampleStat.counts, game.sets);
+      let e = 0;
+      for (const k of cand) e += prob[k] || 0;
       if (e > bestE) {
         bestE = e;
         best = cand;
       }
     }
-    const totalDigits = game.sets * game.digitsPerSet;
+    if (!best) best = sampleAnyPair(game.sets);
     return {
       gameId,
       gameType: 'digit3',
       model: modelId,
       modelName: MODEL_META[modelId].name,
-      numbers: best || generateDigitNumbers(dScores, game.sets, game.digitsPerSet),
+      numbers: best, // cặp số có khả năng xuất hiện cao nhất trong cả kỳ quay
       special: [],
       confidence: confidenceFor(modelId, drawCount, modelStat.hitRate),
-      expectedHits: Math.round(bestE * 100) / 100,
-      expectedMax: totalDigits,
-      accuracy: totalDigits ? bestE / totalDigits : 0,
+      expectedHits: Math.round(bestE * 1000) / 1000,
+      expectedMax: game.sets,
+      accuracy: game.sets ? bestE / game.sets : 0,
       sims: N,
       createdAt: new Date().toISOString(),
     };
@@ -320,14 +399,19 @@ export function predict(gameId, draws, modelId, params, modelStat = {}) {
   const drawCount = draws ? draws.length : 0;
 
   if (game.type === 'digit3') {
-    const scores = digitScores(modelId, draws || [], p, adaptiveWeights);
-    const numbers = generateDigitNumbers(scores, game.sets, game.digitsPerSet);
+    let numbers;
+    if (modelId === 'random') {
+      numbers = sampleAnyPair(game.sets);
+    } else {
+      const { counts } = number3DFreq(draws || [], decay3D(modelId, p));
+      numbers = topNumbers(counts, game.sets);
+    }
     return {
       gameId,
       gameType: 'digit3',
       model: modelId,
       modelName: MODEL_META[modelId].name,
-      numbers,
+      numbers, // cặp số có khả năng xuất hiện cao nhất trong cả kỳ quay
       special: [],
       confidence: confidenceFor(modelId, drawCount, modelStat.hitRate),
       createdAt: new Date().toISOString(),
