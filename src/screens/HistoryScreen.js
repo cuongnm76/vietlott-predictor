@@ -77,7 +77,7 @@ export default function HistoryScreen() {
                   special={p.special}
                   digit3={p.gameType === 'digit3'}
                   size={36}
-                  hits={p.result ? (p.gameType === 'digit3' ? p.result.special : p.result.numbers) : null}
+                  hits={p.result ? (p.gameType === 'digit3' ? (p.result.all || p.result.special) : p.result.numbers) : null}
                 />
 
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
