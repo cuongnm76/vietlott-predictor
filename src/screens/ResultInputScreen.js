@@ -388,7 +388,7 @@ export default function ResultInputScreen({ route, navigation }) {
                     size={34}
                     hits={
                       game.type === 'digit3'
-                        ? comparison.actual.special
+                        ? comparison.actual.all || comparison.actual.special
                         : comparison.actual.main
                     }
                   />
