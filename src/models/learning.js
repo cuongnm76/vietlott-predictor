@@ -27,25 +27,15 @@ function ensure(stats, gameId, modelId) {
 export function evaluatePrediction(gameId, prediction, actual) {
   const game = GAMES[gameId];
   if (game.type === 'digit3') {
-    const predicted = prediction.numbers || [];
-    const real = (actual.special || []).map((s) => String(s).padStart(3, '0'));
+    // Trúng khi số dự đoán xuất hiện ở BẤT KỲ giải nào của cả kỳ quay
+    const predicted = (prediction.numbers || []).map((s) => String(s).padStart(3, '0'));
+    const pool = (actual.all && actual.all.length ? actual.all : actual.special || []).map((s) =>
+      String(s).padStart(3, '0')
+    );
+    const realSet = new Set(pool);
     let hits = 0;
-    const realCopy = [...real];
-    for (const p of predicted) {
-      const idx = realCopy.indexOf(String(p).padStart(3, '0'));
-      if (idx >= 0) {
-        hits++;
-        realCopy.splice(idx, 1);
-      }
-    }
-    // khớp theo từng chữ số (thông tin phụ)
-    let digitHits = 0;
-    for (let i = 0; i < predicted.length && i < real.length; i++) {
-      const a = String(predicted[i]).padStart(3, '0');
-      const b = String(real[i]).padStart(3, '0');
-      for (let k = 0; k < 3; k++) if (a[k] === b[k]) digitHits++;
-    }
-    return { hits, possible: game.sets, digitHits, digitPossible: game.sets * 3 };
+    for (const p of predicted) if (realSet.has(p)) hits++;
+    return { hits, possible: game.sets };
   }
   // standard
   const realMain = new Set(actual.main || []);
