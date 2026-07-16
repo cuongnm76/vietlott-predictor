@@ -1,6 +1,5 @@
 name: Build Android APK
 
-# Tự động biên dịch APK bản release (chạy offline được) mỗi khi đẩy code lên.
 on:
   push:
     branches: [main, master]
@@ -31,10 +30,10 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Prebuild (tạo project android)
+      - name: Prebuild
         run: npx expo prebuild --platform android --no-install
 
-      - name: Tăng bộ nhớ cho Gradle (chống lỗi hết RAM)
+      - name: Tang bo nho Gradle
         run: |
           {
             echo ""
@@ -43,17 +42,35 @@ jobs:
             echo "org.gradle.workers.max=2"
             echo "org.gradle.daemon=false"
           } >> android/gradle.properties
-          echo "----- gradle.properties -----"
           cat android/gradle.properties
 
-      - name: Cấp quyền cho gradlew
+      - name: Uu tien Maven Central truoc kho snapshots
+        run: |
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/init.gradle <<'EOF'
+          allprojects {
+            buildscript {
+              repositories {
+                mavenCentral()
+                google()
+              }
+            }
+            repositories {
+              mavenCentral()
+              google()
+            }
+          }
+          EOF
+          cat ~/.gradle/init.gradle
+
+      - name: Cap quyen gradlew
         run: chmod +x android/gradlew
 
       - name: Build Release APK
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon --stacktrace --max-workers=2
 
-      - name: Liệt kê file APK
+      - name: Liet ke APK
         run: find android/app/build/outputs/apk -name "*.apk" -print
 
       - name: Upload APK artifact
