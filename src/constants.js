@@ -79,7 +79,7 @@ export const GAMES = {
 
 export const GAME_LIST = Object.values(GAMES);
 
-export const MODEL_IDS = ['random', 'frequency', 'markov', 'adaptive'];
+export const MODEL_IDS = ['random', 'frequency', 'markov', 'bayesian', 'gap', 'adaptive'];
 
 export const MODEL_META = {
   random: {
@@ -100,10 +100,22 @@ export const MODEL_META = {
     desc: 'Dự báo theo xác suất chuyển tiếp giữa các kỳ.',
     baseConfidence: 0.4,
   },
+  bayesian: {
+    id: 'bayesian',
+    name: 'Bayesian',
+    desc: 'Hậu nghiệm Dirichlet với suy giảm theo thời gian (half-life) — ước lượng xác suất hiện đại cho dữ liệu ngẫu nhiên.',
+    baseConfidence: 0.5,
+  },
+  gap: {
+    id: 'gap',
+    name: 'Chu kỳ (Gap)',
+    desc: 'Phân tích khoảng cách xuất hiện — ưu tiên số "đến hạn" lâu chưa ra so với chu kỳ trung bình.',
+    baseConfidence: 0.4,
+  },
   adaptive: {
     id: 'adaptive',
     name: 'Thích ứng (AI)',
-    desc: 'Kết hợp 3 mô hình và tự học để tối ưu tham số.',
+    desc: 'Ensemble học trực tuyến: kết hợp mọi mô hình với trọng số tự học từ kết quả thực tế.',
     baseConfidence: 0.6,
   },
 };
@@ -113,6 +125,8 @@ export const DEFAULT_PARAMS = {
   random: {},
   frequency: { weightFactor: 1.0, minOccurrences: 2 },
   markov: { order: 1, smoothing: 0.5 },
+  bayesian: { alpha: 0.5, halfLife: 30 },
+  gap: { gapPower: 1.0, mixFreq: 0.3 },
   adaptive: { learningRate: 0.3, decayFactor: 0.9, windowSize: 50 },
 };
 
@@ -124,6 +138,14 @@ export const PARAM_RANGES = {
   markov: {
     order: { min: 1, max: 5, step: 1, label: 'Bậc (order)' },
     smoothing: { min: 0.1, max: 1.0, step: 0.1, label: 'Làm mượt (smoothing)' },
+  },
+  bayesian: {
+    alpha: { min: 0.1, max: 2.0, step: 0.1, label: 'Tiên nghiệm (alpha)' },
+    halfLife: { min: 10, max: 100, step: 5, label: 'Bán rã dữ liệu (kỳ)' },
+  },
+  gap: {
+    gapPower: { min: 0.5, max: 2.0, step: 0.1, label: 'Độ nhạy chu kỳ' },
+    mixFreq: { min: 0, max: 1.0, step: 0.05, label: 'Pha trộn tần suất' },
   },
   adaptive: {
     learningRate: { min: 0.1, max: 1.0, step: 0.1, label: 'Tốc độ học' },
