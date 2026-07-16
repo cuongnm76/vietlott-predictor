@@ -5,11 +5,20 @@ import {
   randomScores,
   frequencyScores,
   markovScores,
+  bayesianScores,
+  gapScores,
   normalizeScores,
   pickTopUnique,
 } from './scoring';
 
-const DEFAULT_ADAPTIVE_WEIGHTS = { frequency: 0.5, markov: 0.35, random: 0.15 };
+// Trọng số khởi tạo của AI ensemble (5 thành phần) — sẽ tự học theo kết quả
+export const DEFAULT_ADAPTIVE_WEIGHTS = {
+  frequency: 0.3,
+  markov: 0.15,
+  bayesian: 0.25,
+  gap: 0.2,
+  random: 0.1,
+};
 
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
@@ -20,25 +29,35 @@ function poolScores(modelId, sets, min, max, params, adaptiveWeights) {
   if (modelId === 'random') return randomScores(min, max);
   if (modelId === 'frequency') return frequencyScores(sets, min, max, params);
   if (modelId === 'markov') return markovScores(sets, min, max, params);
-  // adaptive: kết hợp
-  const w = adaptiveWeights || DEFAULT_ADAPTIVE_WEIGHTS;
+  if (modelId === 'bayesian') return bayesianScores(sets, min, max, params);
+  if (modelId === 'gap') return gapScores(sets, min, max, params);
+  // adaptive: AI ensemble kết hợp 5 thành phần với trọng số tự học
+  const w = { ...DEFAULT_ADAPTIVE_WEIGHTS, ...(adaptiveWeights || {}) };
   const windowSize = Math.round(params.windowSize ?? 50);
   const windowed = sets.slice(-windowSize);
-  const f = normalizeScores(
-    frequencyScores(windowed, min, max, {
-      weightFactor: 1.2,
-      minOccurrences: 1,
-      decayFactor: params.decayFactor ?? 0.9,
-    }),
-    min,
-    max
-  );
-  const m = normalizeScores(markovScores(windowed, min, max, { order: 1, smoothing: 0.5 }), min, max);
-  const r = normalizeScores(randomScores(min, max), min, max);
-  const total = (w.frequency + w.markov + w.random) || 1;
+  const comp = {
+    frequency: normalizeScores(
+      frequencyScores(windowed, min, max, {
+        weightFactor: 1.2,
+        minOccurrences: 1,
+        decayFactor: params.decayFactor ?? 0.9,
+      }),
+      min,
+      max
+    ),
+    markov: normalizeScores(markovScores(windowed, min, max, { order: 1, smoothing: 0.5 }), min, max),
+    bayesian: normalizeScores(bayesianScores(sets, min, max, { alpha: 0.5, halfLife: 30 }), min, max),
+    gap: normalizeScores(gapScores(sets, min, max, { gapPower: 1.0, mixFreq: 0.3 }), min, max),
+    random: normalizeScores(randomScores(min, max), min, max),
+  };
+  let total = 0;
+  for (const k of Object.keys(comp)) total += w[k] || 0;
+  if (!total) total = 1;
   const out = {};
   for (let n = min; n <= max; n++) {
-    out[n] = (w.frequency * f[n] + w.markov * m[n] + w.random * r[n]) / total;
+    let v = 0;
+    for (const k of Object.keys(comp)) v += (w[k] || 0) * comp[k][n];
+    out[n] = v / total;
   }
   return out;
 }
@@ -103,6 +122,10 @@ function confidenceFor(modelId, drawCount, learnedHitRate) {
     case 'frequency':
       return clamp(0.4 + dataBoost, 0.4, 0.6);
     case 'markov':
+      return clamp(0.3 + dataBoost, 0.3, 0.5);
+    case 'bayesian':
+      return clamp(0.4 + dataBoost, 0.4, 0.6);
+    case 'gap':
       return clamp(0.3 + dataBoost, 0.3, 0.5);
     case 'adaptive':
       return clamp(0.5 + (learnedHitRate || 0) * 0.2, 0.5, 0.7);
@@ -289,7 +312,38 @@ function sampleNumberPair(counts, sets) {
 function decay3D(modelId, params) {
   if (modelId === 'markov') return params.decayFactor ?? 0.85;
   if (modelId === 'adaptive') return params.decayFactor ?? 0.9;
-  return 1; // frequency: dùng toàn bộ lịch sử
+  if (modelId === 'bayesian') {
+    const hl = Math.max(1, params.halfLife ?? 30);
+    return Math.pow(0.5, 1 / hl); // suy giảm mũ tương đương half-life
+  }
+  return 1; // frequency/gap: dùng toàn bộ lịch sử
+}
+
+// Điểm "đến hạn" cho số 3 chữ số: kỳ càng lâu chưa xuất hiện càng cao điểm
+function number3DGapCounts(draws, params = {}) {
+  const gapPower = params.gapPower ?? 1.0;
+  const lastSeen = {};
+  const counts = {};
+  let t = 0;
+  for (const d of draws) {
+    const nums = d.all && d.all.length ? d.all : d.special || [];
+    if (!nums.length) continue;
+    t++;
+    for (const s of nums) {
+      const k = String(s).padStart(3, '0');
+      if (!/^\d{3}$/.test(k)) continue;
+      lastSeen[k] = t;
+      counts[k] = (counts[k] || 0) + 1;
+    }
+  }
+  const out = {};
+  for (const k of Object.keys(counts)) {
+    const c = counts[k];
+    const avgGap = c > 0 ? t / c : t;
+    const gap = t - (lastSeen[k] || 0);
+    out[k] = Math.pow((gap + 1) / (avgGap + 1), gapPower);
+  }
+  return out;
 }
 
 // Dự đoán bằng mô phỏng: chạy `n` lần, mỗi lần sinh 1 bộ số theo phân phối của
@@ -302,75 +356,75 @@ export function predictSimulated(gameId, draws, modelId, params, modelStat = {},
   const N = Math.max(1, Math.min(Math.round(n) || 100, SIM_MAX));
 
   if (game.type === 'digit3') {
-    // Xác suất mỗi số 3 chữ số xuất hiện trong 1 kỳ quay (dựa trên TOÀN BỘ các giải)
-    const evalStat = number3DFreq(draws || [], 1);
-    const denom = evalStat.totalDraws || 1;
-    const prob = {};
-    for (const k of Object.keys(evalStat.counts)) prob[k] = evalStat.counts[k] / denom;
-    // phân phối để lấy mẫu (frequency: toàn bộ; markov/adaptive: ưu tiên kỳ mới)
-    const sampleStat = modelId === 'random' ? { counts: {} } : number3DFreq(draws || [], decay3D(modelId, p));
-    let best = null;
-    let bestE = -1;
+    // Mô phỏng n lần, mỗi lần sinh 1 cặp số; ĐẾM PHIẾU từng số 3 chữ số qua n lần.
+    // Kết quả đề xuất = các số có TỶ LỆ XUẤT HIỆN CAO NHẤT trong n lần mô phỏng.
+    const sampleStat =
+      modelId === 'random'
+        ? { counts: {} }
+        : modelId === 'gap'
+        ? { counts: number3DGapCounts(draws || [], p) }
+        : number3DFreq(draws || [], decay3D(modelId, p));
+    const votes = {};
     for (let i = 0; i < N; i++) {
       const cand =
         modelId === 'random' ? sampleAnyPair(game.sets) : sampleNumberPair(sampleStat.counts, game.sets);
-      let e = 0;
-      for (const k of cand) e += prob[k] || 0;
-      if (e > bestE) {
-        bestE = e;
-        best = cand;
-      }
+      for (const k of cand) votes[k] = (votes[k] || 0) + 1;
     }
-    if (!best) best = sampleAnyPair(game.sets);
+    const ranked = Object.keys(votes).sort((a, b) => votes[b] - votes[a] || (Math.random() - 0.5));
+    const best = ranked.slice(0, game.sets);
+    while (best.length < game.sets) best.push(randomNumber3());
+    const consensus = best.reduce((s, k) => s + (votes[k] || 0), 0) / (best.length * N);
     return {
       gameId,
       gameType: 'digit3',
       model: modelId,
       modelName: MODEL_META[modelId].name,
-      numbers: best, // cặp số có khả năng xuất hiện cao nhất trong cả kỳ quay
+      numbers: best, // các số có tỷ lệ xuất hiện cao nhất qua n lần mô phỏng
       special: [],
       confidence: confidenceFor(modelId, drawCount, modelStat.hitRate),
-      expectedHits: Math.round(bestE * 1000) / 1000,
-      expectedMax: game.sets,
-      accuracy: game.sets ? bestE / game.sets : 0,
+      consensus: Math.round(consensus * 1000) / 1000,
+      accuracy: consensus,
       sims: N,
       createdAt: new Date().toISOString(),
     };
   }
 
-  // standard
+  // standard: mô phỏng n lần, ĐẾM PHIẾU từng số qua n lần; kết quả đề xuất =
+  // các số có TỶ LỆ XUẤT HIỆN CAO NHẤT trong n lần mô phỏng.
   const mainSets = (draws || []).map((d) => d.main || []);
   const scores = poolScores(modelId, mainSets, game.mainMin, game.mainMax, p, adaptiveWeights);
-  const prob = frequencyProb(mainSets, game.mainMin, game.mainMax);
   const sampleScores = modelId === 'random' ? randomScores(game.mainMin, game.mainMax) : scores;
-  let best = null;
-  let bestE = -1;
+  const votes = {};
   for (let i = 0; i < N; i++) {
     const cand = weightedSampleSet(sampleScores, game.mainCount, game.mainMin, game.mainMax);
-    const e = expectedHits(cand, prob);
-    if (e > bestE) {
-      bestE = e;
-      best = cand;
-    }
+    for (const x of cand) votes[x] = (votes[x] || 0) + 1;
   }
+  const items = [];
+  for (let x = game.mainMin; x <= game.mainMax; x++) {
+    items.push({ x, v: (votes[x] || 0) + Math.random() * 1e-6 });
+  }
+  items.sort((a, b) => b.v - a.v);
+  const best = items.slice(0, game.mainCount).map((it) => it.x).sort((a, b) => a - b);
+  const consensus = best.reduce((s, x) => s + (votes[x] || 0), 0) / (game.mainCount * N);
 
   let special = [];
+  let sConsensus = null;
   if (game.special) {
     const specSets = (draws || []).map((d) => d.special || []).filter((s) => s.length > 0);
     const sScores = poolScores(modelId, specSets, game.special.min, game.special.max, p, adaptiveWeights);
-    const sProb = frequencyProb(specSets, game.special.min, game.special.max);
     const sSample = modelId === 'random' ? randomScores(game.special.min, game.special.max) : sScores;
-    let sBest = null;
-    let sBestE = -1;
+    const sVotes = {};
     for (let i = 0; i < N; i++) {
       const c = weightedSampleSet(sSample, game.special.count, game.special.min, game.special.max);
-      const e = expectedHits(c, sProb);
-      if (e > sBestE) {
-        sBestE = e;
-        sBest = c;
-      }
+      for (const x of c) sVotes[x] = (sVotes[x] || 0) + 1;
     }
-    special = sBest || [];
+    const sItems = [];
+    for (let x = game.special.min; x <= game.special.max; x++) {
+      sItems.push({ x, v: (sVotes[x] || 0) + Math.random() * 1e-6 });
+    }
+    sItems.sort((a, b) => b.v - a.v);
+    special = sItems.slice(0, game.special.count).map((it) => it.x).sort((a, b) => a - b);
+    sConsensus = special.reduce((s, x) => s + (sVotes[x] || 0), 0) / (game.special.count * N);
   }
 
   return {
@@ -381,9 +435,9 @@ export function predictSimulated(gameId, draws, modelId, params, modelStat = {},
     numbers: best,
     special,
     confidence: confidenceFor(modelId, drawCount, modelStat.hitRate),
-    expectedHits: Math.round(bestE * 100) / 100,
-    expectedMax: game.mainCount,
-    accuracy: game.mainCount ? bestE / game.mainCount : 0,
+    consensus: Math.round(consensus * 1000) / 1000,
+    specialConsensus: sConsensus == null ? null : Math.round(sConsensus * 1000) / 1000,
+    accuracy: consensus,
     sims: N,
     createdAt: new Date().toISOString(),
   };
@@ -402,6 +456,8 @@ export function predict(gameId, draws, modelId, params, modelStat = {}) {
     let numbers;
     if (modelId === 'random') {
       numbers = sampleAnyPair(game.sets);
+    } else if (modelId === 'gap') {
+      numbers = topNumbers(number3DGapCounts(draws || [], p), game.sets);
     } else {
       const { counts } = number3DFreq(draws || [], decay3D(modelId, p));
       numbers = topNumbers(counts, game.sets);
