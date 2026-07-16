@@ -12,6 +12,8 @@ const MODEL_COLORS = {
   random: '#94A3B8',
   frequency: '#2563EB',
   markov: '#D97706',
+  bayesian: '#0EA5E9',
+  gap: '#DB2777',
   adaptive: '#16A34A',
 };
 
