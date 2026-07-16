@@ -107,6 +107,66 @@ export function markovScores(sets, min, max, params = {}) {
   return s;
 }
 
+// Điểm Bayesian: hậu nghiệm Dirichlet-multinomial với suy giảm mũ theo thời gian.
+// - alpha: tiên nghiệm (nhỏ -> tin dữ liệu, lớn -> gần phân phối đều)
+// - halfLife: sau bao nhiêu kỳ thì trọng số dữ liệu giảm một nửa
+export function bayesianScores(sets, min, max, params = {}) {
+  const alpha = params.alpha ?? 0.5;
+  const halfLife = Math.max(1, params.halfLife ?? 30);
+  const counts = {};
+  const total = sets.length;
+  let weightSum = 0;
+  for (let i = 0; i < total; i++) {
+    const w = Math.pow(0.5, (total - 1 - i) / halfLife);
+    weightSum += w;
+    for (const n of sets[i]) {
+      if (n < min || n > max) continue;
+      counts[n] = (counts[n] || 0) + w;
+    }
+  }
+  const K = max - min + 1;
+  const s = {};
+  for (let n = min; n <= max; n++) {
+    // hậu nghiệm trung bình: (count + alpha) / (tổng trọng số + alpha*K)
+    s[n] = ((counts[n] || 0) + alpha) / (weightSum + alpha * K);
+  }
+  return s;
+}
+
+// Điểm Chu kỳ (Gap): số càng lâu chưa ra so với chu kỳ trung bình của nó
+// càng được ưu tiên ("đến hạn"), pha trộn với tần suất theo mixFreq.
+export function gapScores(sets, min, max, params = {}) {
+  const gapPower = params.gapPower ?? 1.0;
+  const mixFreq = Math.max(0, Math.min(1, params.mixFreq ?? 0.3));
+  const total = sets.length;
+  const lastSeen = {};
+  const counts = {};
+  for (let i = 0; i < total; i++) {
+    for (const n of sets[i]) {
+      if (n < min || n > max) continue;
+      lastSeen[n] = i;
+      counts[n] = (counts[n] || 0) + 1;
+    }
+  }
+  const gapRaw = {};
+  const freqRaw = {};
+  for (let n = min; n <= max; n++) {
+    const c = counts[n] || 0;
+    const avgGap = c > 0 ? total / c : total; // chu kỳ trung bình của số n
+    const gap = lastSeen[n] != null ? total - 1 - lastSeen[n] : total;
+    // tỉ lệ "quá hạn": gap hiện tại so với chu kỳ trung bình
+    gapRaw[n] = Math.pow((gap + 1) / (avgGap + 1), gapPower);
+    freqRaw[n] = c;
+  }
+  const gN = normalizeScores(gapRaw, min, max);
+  const fN = normalizeScores(freqRaw, min, max);
+  const s = {};
+  for (let n = min; n <= max; n++) {
+    s[n] = (1 - mixFreq) * gN[n] + mixFreq * fN[n];
+  }
+  return s;
+}
+
 // Chuẩn hóa điểm về [0,1] để dễ kết hợp
 export function normalizeScores(scores, min, max) {
   let lo = Infinity;
