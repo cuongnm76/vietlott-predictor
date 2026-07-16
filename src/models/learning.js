@@ -7,6 +7,10 @@ export function emptyStats() {
   return {}; // stats[gameId][modelId] = {...}
 }
 
+// 5 thành phần của AI ensemble
+const ENSEMBLE_COMPONENTS = ['frequency', 'markov', 'bayesian', 'gap', 'random'];
+const DEFAULT_WEIGHTS = { frequency: 0.3, markov: 0.15, bayesian: 0.25, gap: 0.2, random: 0.1 };
+
 function ensure(stats, gameId, modelId) {
   if (!stats[gameId]) stats[gameId] = {};
   if (!stats[gameId][modelId]) {
@@ -17,8 +21,15 @@ function ensure(stats, gameId, modelId) {
       hitRate: 0,
       bestHits: 0,
       history: [], // [{date, hits, possible}]
-      adaptiveWeights: { frequency: 0.5, markov: 0.35, random: 0.15 },
+      adaptiveWeights: { ...DEFAULT_WEIGHTS },
     };
+  }
+  // tương thích dữ liệu cũ (chỉ có 3 thành phần): bổ sung thành phần thiếu
+  const w = stats[gameId][modelId].adaptiveWeights;
+  if (w) {
+    for (const k of ENSEMBLE_COMPONENTS) {
+      if (w[k] == null) w[k] = DEFAULT_WEIGHTS[k];
+    }
   }
   return stats[gameId][modelId];
 }
@@ -61,32 +72,28 @@ function applyEval(stat, date, hits, possible) {
   if (stat.history.length > 200) stat.history.shift();
 }
 
-// AI: điều chỉnh trọng số mô hình Thích ứng theo hiệu suất đo được của
-// các mô hình thành phần (frequency / markov / random).
+// AI ensemble học trực tuyến: cập nhật trọng số 5 thành phần theo hiệu suất
+// đo được (kiểu multiplicative weights / Hedge có sàn khám phá).
 function tuneAdaptiveWeights(stats, gameId, learningRate = 0.3) {
   const adaptive = ensure(stats, gameId, 'adaptive');
-  const fr = stats[gameId]?.frequency?.hitRate ?? 0.0;
-  const mk = stats[gameId]?.markov?.hitRate ?? 0.0;
-  const rd = stats[gameId]?.random?.hitRate ?? 0.0;
-  // mục tiêu tỉ lệ thuận với hiệu suất, có sàn để vẫn khám phá
-  const floor = 0.05;
-  let tf = fr + floor;
-  let tm = mk + floor;
-  let tr = rd + floor;
-  const sum = tf + tm + tr || 1;
-  tf /= sum;
-  tm /= sum;
-  tr /= sum;
   const w = adaptive.adaptiveWeights;
+  const floor = 0.04; // sàn để mọi thành phần vẫn được "khám phá"
+  // mục tiêu tỉ lệ thuận với hiệu suất từng thành phần
+  const target = {};
+  let tSum = 0;
+  for (const k of ENSEMBLE_COMPONENTS) {
+    target[k] = (stats[gameId]?.[k]?.hitRate ?? 0) + floor;
+    tSum += target[k];
+  }
+  for (const k of ENSEMBLE_COMPONENTS) target[k] /= tSum || 1;
+  // dịch dần theo tốc độ học
   const lr = learningRate;
-  w.frequency = (1 - lr) * w.frequency + lr * tf;
-  w.markov = (1 - lr) * w.markov + lr * tm;
-  w.random = (1 - lr) * w.random + lr * tr;
-  // chuẩn hóa lại
-  const s2 = w.frequency + w.markov + w.random || 1;
-  w.frequency /= s2;
-  w.markov /= s2;
-  w.random /= s2;
+  let s2 = 0;
+  for (const k of ENSEMBLE_COMPONENTS) {
+    w[k] = (1 - lr) * (w[k] ?? DEFAULT_WEIGHTS[k]) + lr * target[k];
+    s2 += w[k];
+  }
+  for (const k of ENSEMBLE_COMPONENTS) w[k] /= s2 || 1;
   return w;
 }
 
@@ -94,9 +101,11 @@ function tuneAdaptiveWeights(stats, gameId, learningRate = 0.3) {
 const TUNE_GRID = {
   frequency: { weightFactor: [0.5, 2.0, 0.1], minOccurrences: [1, 10, 1] },
   markov: { order: [1, 5, 1], smoothing: [0.1, 1.0, 0.1] },
+  bayesian: { alpha: [0.1, 2.0, 0.1], halfLife: [10, 100, 5] },
+  gap: { gapPower: [0.5, 2.0, 0.1], mixFreq: [0, 1.0, 0.05] },
   adaptive: { decayFactor: [0.5, 1.0, 0.05], windowSize: [10, 100, 5], learningRate: [0.1, 1.0, 0.1] },
 };
-const INT_PARAMS = new Set(['order', 'minOccurrences', 'windowSize']);
+const INT_PARAMS = new Set(['order', 'minOccurrences', 'windowSize', 'halfLife']);
 
 function clampN(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
@@ -117,7 +126,7 @@ export function tuneParameters(stats, gameId, history, actual, baseParams = {}, 
   if (!history || history.length < 20 || !actual || !actual.main) return stats;
   const hist = history.slice(-150); // giới hạn chi phí tính toán
 
-  for (const modelId of ['frequency', 'markov', 'adaptive']) {
+  for (const modelId of ['frequency', 'markov', 'bayesian', 'gap', 'adaptive']) {
     const grid = TUNE_GRID[modelId];
     const stat = ensure(stats, gameId, modelId);
     const start = {
@@ -174,7 +183,7 @@ export function recordResult(stats, gameId, predictions, actual, history = [], b
 export function summarizeStats(stats, gameId) {
   const out = {};
   const g = stats[gameId] || {};
-  ['random', 'frequency', 'markov', 'adaptive'].forEach((m) => {
+  ['random', 'frequency', 'markov', 'bayesian', 'gap', 'adaptive'].forEach((m) => {
     const s = g[m];
     out[m] = s
       ? { hitRate: s.hitRate, count: s.count, bestHits: s.bestHits, totalHits: s.totalHits }
