@@ -93,6 +93,11 @@ export default function PredictionScreen({ route, navigation }) {
                   🟧 {game.special.label}
                 </AppText>
               ) : null}
+              {p.sims ? (
+                <AppText muted size={11} style={{ textAlign: 'center', marginTop: 8 }}>
+                  🔁 {p.sims} lần mô phỏng • tỷ lệ xuất hiện {pct(p.consensus)}
+                </AppText>
+              ) : null}
             </Card>
           ))}
         </>
